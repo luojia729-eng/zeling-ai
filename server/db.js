@@ -164,7 +164,9 @@ function initTables() {
 export async function initDb() {
   if (realDb) return
 
-  SQL = await initSqlJs()
+  // 指定本地 wasm 文件路径（Vercel 环境无法访问外部 CDN）
+  const wasmPath = join(__dirname, '..', 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm')
+  SQL = await initSqlJs({ locateFile: () => wasmPath })
 
   if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true })
