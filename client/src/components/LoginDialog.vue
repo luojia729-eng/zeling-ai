@@ -8,88 +8,62 @@
   >
     <div class="login-header">
       <div class="login-logo">✦</div>
-      <h2>欢迎登录 / 注册</h2>
-      <p>使用邮箱继续登录 ZeLing AI</p>
+      <h2>{{ isRegister ? '注册账号' : '欢迎登录' }}</h2>
+      <p>使用邮箱{{ isRegister ? '注册 ZeLing AI' : '登录 ZeLing AI' }}</p>
     </div>
 
-    <el-tabs v-model="activeTab" class="login-tabs">
-      <el-tab-pane label="密码登录" name="password">
-        <el-form @submit.prevent="handleLogin">
-          <el-form-item>
-            <el-input
-              v-model="loginForm.email"
-              placeholder="邮箱地址"
-              size="large"
-              type="email"
-            />
-          </el-form-item>
-          <el-form-item>
-            <el-input
-              v-model="loginForm.password"
-              type="password"
-              placeholder="请输入密码（至少 6 位）"
-              size="large"
-              show-password
-            />
-          </el-form-item>
-          <div class="form-options">
-            <el-checkbox v-model="rememberMe">记住账号密码</el-checkbox>
-            <a class="forgot-link">忘记密码？</a>
-          </div>
-          <el-button
-            type="primary"
-            size="large"
-            class="submit-btn"
-            :loading="loading"
-            @click="handleLogin"
-          >
-            登录
-          </el-button>
-        </el-form>
-      </el-tab-pane>
-
-      <el-tab-pane label="邮箱登录" name="code">
-        <el-form @submit.prevent="handleCodeLogin">
-          <el-form-item>
-            <el-input
-              v-model="codeForm.email"
-              placeholder="邮箱地址"
-              size="large"
-              type="email"
-            />
-          </el-form-item>
-          <el-form-item>
-            <div class="code-input-wrap">
-              <el-input
-                v-model="codeForm.code"
-                placeholder="验证码"
-                size="large"
-              />
-              <el-button
-                size="large"
-                :disabled="codeCountdown > 0"
-                @click="sendCode"
-              >
-                {{ codeCountdown > 0 ? `${codeCountdown}s` : '获取验证码' }}
-              </el-button>
-            </div>
-          </el-form-item>
-          <el-button
-            type="primary"
-            size="large"
-            class="submit-btn"
-            :loading="loading"
-            @click="handleCodeLogin"
-          >
-            登录 / 注册
-          </el-button>
-        </el-form>
-      </el-tab-pane>
-    </el-tabs>
+    <el-form @submit.prevent="handleSubmit">
+      <el-form-item>
+        <el-input
+          v-model="form.email"
+          placeholder="邮箱地址"
+          size="large"
+          type="email"
+        />
+      </el-form-item>
+      <el-form-item v-if="isRegister">
+        <el-input
+          v-model="form.nickname"
+          placeholder="昵称（选填）"
+          size="large"
+        />
+      </el-form-item>
+      <el-form-item>
+        <el-input
+          v-model="form.password"
+          type="password"
+          placeholder="请输入密码（至少 6 位）"
+          size="large"
+          show-password
+        />
+      </el-form-item>
+      <el-form-item v-if="isRegister">
+        <el-input
+          v-model="form.confirmPassword"
+          type="password"
+          placeholder="确认密码"
+          size="large"
+          show-password
+        />
+      </el-form-item>
+      <div v-if="!isRegister" class="form-options">
+        <el-checkbox v-model="rememberMe">记住账号密码</el-checkbox>
+        <a class="forgot-link">忘记密码？</a>
+      </div>
+      <el-button
+        type="primary"
+        size="large"
+        class="submit-btn"
+        :loading="loading"
+        @click="handleSubmit"
+      >
+        {{ isRegister ? '注册' : '登录' }}
+      </el-button>
+    </el-form>
 
     <div class="login-footer">
-      <span>还没有账号？</span>
-      <a @click="activeTab = 'code'" class="register-link">立即注册</a>
+      <span>{{ isRegister ? '已有账号？' : '还没有账号？' }}</span>
+      <a @click="toggleMode" class="register-link">{{ isRegister ? '去登录' : '立即注册' }}</a>
     </div>
 
     <div class="login-agreement">
@@ -107,46 +81,47 @@ const props = defineProps({ visible: Boolean })
 const emit = defineEmits(['update:visible'])
 
 const userStore = useUserStore()
-const activeTab = ref('password')
+const isRegister = ref(false)
 const loading = ref(false)
 const rememberMe = ref(false)
-const codeCountdown = ref(0)
 
-const loginForm = reactive({ email: '', password: '' })
-const codeForm = reactive({ email: '', code: '' })
+const form = reactive({ email: '', password: '', confirmPassword: '', nickname: '' })
 
-async function handleLogin() {
-  if (!loginForm.email || !loginForm.password) {
+function toggleMode() {
+  isRegister.value = !isRegister.value
+  form.password = ''
+  form.confirmPassword = ''
+}
+
+async function handleSubmit() {
+  if (!form.email || !form.password) {
     ElMessage.warning('请输入邮箱和密码')
     return
   }
+  if (form.password.length < 6) {
+    ElMessage.warning('密码至少 6 位')
+    return
+  }
+  if (isRegister.value && form.password !== form.confirmPassword) {
+    ElMessage.warning('两次输入的密码不一致')
+    return
+  }
+
   loading.value = true
   try {
-    await userStore.login(loginForm.email, loginForm.password)
-    ElMessage.success('登录成功')
+    if (isRegister.value) {
+      await userStore.register(form.email, form.password, form.nickname || undefined)
+      ElMessage.success('注册成功，已自动登录')
+    } else {
+      await userStore.login(form.email, form.password)
+      ElMessage.success('登录成功')
+    }
     emit('update:visible', false)
   } catch (err) {
     // 错误已在拦截器处理
   } finally {
     loading.value = false
   }
-}
-
-function sendCode() {
-  if (!codeForm.email) {
-    ElMessage.warning('请输入邮箱')
-    return
-  }
-  ElMessage.info('验证码功能演示中，注册请使用密码登录标签页')
-  codeCountdown.value = 60
-  const timer = setInterval(() => {
-    codeCountdown.value--
-    if (codeCountdown.value <= 0) clearInterval(timer)
-  }, 1000)
-}
-
-async function handleCodeLogin() {
-  ElMessage.info('验证码登录演示中，请使用密码登录或注册')
 }
 </script>
 
