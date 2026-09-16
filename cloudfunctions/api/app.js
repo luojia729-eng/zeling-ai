@@ -48,7 +48,15 @@ async function createApp() {
 
   // 健康检查
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', service: 'zeling-ai-server', time: new Date().toISOString() })
+    const db = require('./db.js')
+    res.json({
+      status: 'ok',
+      service: 'zeling-ai-server',
+      time: new Date().toISOString(),
+      storageInitialized: !!db.cloud,
+      storageInitError: db.storageInitError,
+      envRegion: process.env.TENCENTCLOUD_REGION
+    })
   })
 
   // 404

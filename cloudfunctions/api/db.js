@@ -1,17 +1,33 @@
 const initSqlJs = require('sql.js')
 const fs = require('node:fs')
-const { fileURLToPath } = require('node:url')
-const { dirname, join } = require('node:path')
+const path = require('node:path')
 
-// __dirname is available in CommonJS
+// 云函数环境用 /tmp，本地用 ./data
+const isCloud = process.env.TENCENTCLOUD_REGION || process.env.VERCEL || process.env.NODE_ENV === 'production'
+const dbDir = isCloud ? '/tmp' : path.join(__dirname, 'data')
+const dbPath = path.join(dbDir, 'zeling.db')
+const DB_CLOUD_PATH = 'db/zeling.db'
 
-// 数据库路径：Vercel 用 /tmp，本地用 ./data
-const isVercel = process.env.VERCEL || process.env.NODE_ENV === 'production'
-const dbDir = isVercel ? '/tmp' : join(__dirname, 'data')
-const dbPath = join(dbDir, 'zeling.db')
+// 云开发存储（仅云函数环境初始化，使用微信内置 wx-server-sdk）
+let cloud = null
+let storageInitError = null
+try {
+  if (process.env.TENCENTCLOUD_REGION || process.env.WX_CONTEXT) {
+    const wxCloud = require('wx-server-sdk')
+    wxCloud.init({ env: wxCloud.DYNAMIC_CURRENT_ENV })
+    cloud = wxCloud
+    console.log('云存储初始化成功（wx-server-sdk）')
+  } else {
+    storageInitError = '非云函数环境（TENCENTCLOUD_REGION not set）'
+  }
+} catch (e) {
+  storageInitError = e.message + '\n' + e.stack
+  console.warn('云存储初始化失败:', e.message, e.stack)
+}
 
 let realDb = null
 let SQL = null
+let pendingUpload = null // 待完成的云存储上传 Promise
 
 class Statement {
   constructor(stmt) {
@@ -78,9 +94,26 @@ function save() {
   if (!realDb) return
   try {
     const data = realDb.export()
-    fs.writeFileSync(dbPath, Buffer.from(data))
+    const buffer = Buffer.from(data)
+    fs.writeFileSync(dbPath, buffer)
+    // 上传到云存储，Promise 存到 pendingUpload 供云函数入口等待
+    if (cloud) {
+      pendingUpload = cloud.uploadFile({
+        cloudPath: DB_CLOUD_PATH,
+        fileContent: buffer
+      }).then(() => console.log('数据库已同步到云存储'))
+        .catch(e => console.warn('数据库上传云存储失败:', e.message))
+    }
   } catch (e) {
     console.error('保存数据库失败:', e.message)
+  }
+}
+
+// 云函数入口调用：等待所有待完成的上传
+async function waitForUpload() {
+  if (pendingUpload) {
+    await pendingUpload
+    pendingUpload = null
   }
 }
 
@@ -165,11 +198,25 @@ async function initDb() {
   if (realDb) return
 
   // 指定本地 wasm 文件路径（云函数环境无法访问外部 CDN）
-  const wasmPath = join(__dirname, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm')
+  const wasmPath = path.join(__dirname, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm')
   SQL = await initSqlJs({ locateFile: () => wasmPath })
 
   if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true })
+  }
+
+  // 优先从云存储下载数据库文件（实现持久化）
+  if (cloud && !fs.existsSync(dbPath)) {
+    try {
+      const fileID = `cloud://${process.env.TCB_ENV || 'cloudbase-d0g6m2os72e34187f'}/${DB_CLOUD_PATH}`
+      const result = await cloud.downloadFile({ fileID })
+      if (result.fileContent && result.fileContent.length > 0) {
+        fs.writeFileSync(dbPath, result.fileContent)
+        console.log('数据库已从云存储恢复')
+      }
+    } catch (e) {
+      console.log('云存储无数据库文件，将创建新数据库:', e.message)
+    }
   }
 
   if (fs.existsSync(dbPath)) {
@@ -209,4 +256,4 @@ const db = new Proxy(
   }
 )
 
-module.exports = { initDb, db }
+module.exports = { initDb, db, waitForUpload, cloud, storageInitError }
